@@ -1,0 +1,48 @@
+function open(side)
+	if side then
+		return rednet.open(side)
+	else
+		for _, v in pairs(redstone.getSides()) do
+			if peripheral.isPresent(v) and peripheral.getType(v) == "modem" then
+				rednet.open(v)
+				return v
+			end
+		end
+	end
+	return false
+end
+
+function close(side)
+	if side then
+		return rednet.close(side)
+	else
+		for _, v in pairs(redstone.getSides()) do
+			if peripheral.isPresent(v) and peripheral.getType(v) == "modem" and rednet.isOpen(v) then
+				rednet.close(v)
+				return v
+			end
+		end
+	end
+	return false
+end
+
+function announce()
+	return rednet.announce()
+end
+
+function send(reciever, msg)
+	return rednet.send(reciever, msg)
+end
+
+function broadcast(msg)
+	return rednet.broadcast(msg)
+end
+
+function recieve(timeout)
+	return rednet.recieve(timeout)
+end
+
+function isOpen(side)
+	return rednet.isOpen(side)
+end
+

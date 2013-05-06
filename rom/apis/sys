@@ -1,0 +1,159 @@
+function version()
+	return os.version()
+end
+function getComputerID()
+	return os.getComputerID()
+end
+function getComputerLabel()
+	return os.getComputerLabel()
+end
+function setComputerLabel(lbl)
+	return os.setComputerLabel(lbl)
+end
+function run(env, path, args)
+	return os.run(env, path, args)
+end
+function loadAPI(name)
+	return os.loadAPI(name)
+end
+function unloadAPI(name)
+	return os.unloadAPI(name)
+end
+function pullEvent(target)
+	return os.pullEvent(target)
+end
+function pullEventRaw(target)
+	return os.pullEventRaw(target)
+end
+function queueEvent(...)
+	return os.queueEvent(...)
+end
+function clock()
+	return os.clock()
+end
+function startTimer(timeout)
+	return os.startTimer(timeout)
+end
+function sleep(timeout)
+	return os.sleep(timeout)
+end
+function time()
+	return os.time()
+end
+function day()
+	return os.day()
+end
+function setAlarm(time)
+	return os.setAlarm(time)
+end
+function shutdown()
+	return os.shutdown()
+end
+function reboot()
+	return os.reboot()
+end
+
+
+
+function id()
+	return getComputerID()
+end
+
+function label(lbl)
+	local old = getComputerLabel()
+	if lbl then
+		setComputerLabel(lbl)
+	end
+	return old
+end
+function lbl(l)
+	return label(l)
+end
+
+function load(name)
+	return loadAPI(name)
+end
+function unload(name)
+	return unloadAPI(name)
+end
+
+function timer(to)
+	return startTimer(to)
+end
+
+function queue(...)
+	return queueEvent(...)
+end
+
+function pullRaw(p1, p2)
+	return pull(true, p1, p2)
+end
+
+function pull(p1, p2, p3)
+	local raw = false
+	local loop = true
+	local target = nil
+	if type(p1) == "boolean" then
+		if type(p2) == "boolean" then
+			if type(p3) == "string" then
+				raw = p1
+				loop = p2
+				target = p3
+			else
+				raw = p1
+				loop = p2
+			end
+		elseif type(p2) == "string" then
+			if type(p3) == "boolean" then
+				raw = p1
+				target = p2
+				loop = p3
+			else
+				raw = p1
+				target = p2
+			end
+		else
+			raw = p1
+		end
+	elseif type(p1) == "string" then
+		if type(p2) == "boolean" then
+			if type(p3) == "boolean" then
+				target = p1
+				raw = p2
+				loop = p3
+			else
+				target = p1
+				raw = p2
+			end
+		else
+			target = p1
+		end
+	end
+	if loop then
+		local evt = {}
+		while true do
+			if raw then
+				evt = {pullEventRaw(target)}
+			else
+				evt = {pullEvent(target)}
+			end
+			if evt[1] then
+				return evt
+			end
+		end
+	else
+		if raw then
+			return {pullEventRaw(target)}
+		else
+			return {pullEvent(target)}
+		end
+	end
+end
+
+function alarmIn(m, h, d)
+	if not d then d = 0 end
+	if not h then h = 0 end
+	if not m then m = 0 end
+	return alarm(time() + (m + (h * 60) + ((d * 24) * 60)))
+end
+

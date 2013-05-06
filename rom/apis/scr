@@ -1,0 +1,281 @@
+local settings = {"blink" = false, "target" = false, "autocolor" = true, "extraColorPrefixes" = "&"}
+blink(true)
+restore()
+
+-- Screen clearing
+function clear(noReset)
+	term.clear()
+	if not noReset then
+		color("white", "black")
+		term.setCursorPos(1, 1)
+	end
+end
+function clearLine(noReset)
+	term.clear()
+	if not noReset then
+		color("white", "black")
+		local x, y = term.getCursorPos()
+		term.setCursorPos(1, y)
+	end
+end
+
+
+-- Color control
+function setTextColor(color)
+	if term.isColor and term.isColor() then
+		if colors[color] then
+			term.setTextColor(colors[color])
+			return true
+		else
+			term.setTextColor(color)
+			return true
+		end
+	end
+	return false
+end
+function setBackgroundColor(color)
+	if term.isColor and term.isColor() then
+		if colors[color] then
+			term.setBackgroundColor(colors[color])
+			return true
+		else
+			term.setBackgroundColor(color)
+		end
+	end
+	return false
+end
+
+function fcolor(color)
+	return setTextColor(color)
+end
+function tcolor(color)
+	return fcolor(color)
+end
+
+function bcolor(color)
+	return setBackgroundColor(colors[color])
+end
+
+function color(fore, back)
+	local ret = nil
+	if isColor() then
+		if colors.has(fore) then
+			ret = fcolor(fore)
+		else
+			ret = false
+		end
+		if colors.has(back) then
+			ret = bcolor(back)
+		else
+			ret = false
+		end
+	else
+		ret = false
+	end
+	return ret
+end
+
+function isColor()
+	if term.isColor then
+		return term.isColor()
+	end
+	return false
+end
+
+function setTextColour(col)
+	return fcolor(col)
+end
+function setBackgroundColour(col)
+	return bcolor(col)
+end
+function fcolour(col)
+	return fcolor(col)
+function tcolour(col)
+	return tcolor(col)
+end
+function bcolour(col)
+	return bcolor(col)
+end
+function colour(f, b)
+	return color(f, b)
+end
+function isColour()
+	return isColor()
+end
+
+
+-- Positioning
+function setCursorPos(x, y)
+	return term.setCursorPos(x, y)
+end
+function getCursorPos(x, y)
+	return term.getCursorPos()
+end
+
+function setpos(x, y)
+	return setCursorPos(x, y)
+end
+function gopos(x, y)
+	return setpos(x, y)
+end
+
+function getpos()
+	return getCursorPos()
+end
+
+function getX()
+	local x, y = getpos()
+	return x
+end
+
+function getY()
+	local x, y = getpos()
+	return y
+end
+
+function setX(x)
+	local y = getY()
+	return gopos(x, y)
+end
+
+function setY(y)
+	local x = getX()
+	return gopos(x, y)
+end
+
+function lf(times)
+	if not times or times < 1 then
+		times = 1
+	end
+	local i = 0
+	while i < times do
+		write()
+		i = i + 1
+	end
+	return true
+end
+
+
+-- Output
+function write(text, noLF)
+	if not text then text = "" end
+	if noLF then
+		return term.write(text)
+	else
+		return print(text)
+	end
+end
+
+function slow(text, rate, noLF)
+	if not rate then rate = 5 end
+	if noLF then
+		return textutils.slowWrite(text, rate)
+	else
+		return textutils.slowPrint(text, rate)
+	end
+end
+
+function rainbow(text, noLF) -- EXPERIMENTAL - VERY BUGGY - UNTESTED
+	if not isColor() then
+		return write(text, noLF)
+	end
+	local col = 0
+	local colorNames = colors.names()
+	for c in text:gmatch(".") do
+		if col > #colorNames then col = 0 end
+		local fg = col
+		local bg = col + 1
+		if bg > #colorNames then bg = 0 end
+		color(colorNames[fg], colorNames[bg])
+		write(c, true)
+		col = col + 1
+	end
+	if noLF then
+		return
+	end
+	lf()
+	return true
+end
+
+
+-- Cursor blinking
+function setCursorBlink(state)
+	local old = blinking()
+	term.setCursorBlink(state)
+	settings.blink = state
+	return old
+end
+
+function blinking()
+	return settings.blink
+end
+
+function blink(state)
+	return setCursorBlink(state)
+end
+
+
+-- Size
+function getSize()
+	return term.getSize()
+end
+
+function size()
+	return getSize()
+end
+
+function width()
+	local w, h = size()
+	return w
+end
+
+function height()
+	local w, h = size()
+	return h
+end
+
+
+-- Scroll
+
+function scroll(lines)
+	return term.scroll(lines)
+end
+
+
+-- Redirection
+
+function redirect(target)
+	settings.target = target
+	return term.redirect(target)
+end
+
+function restore()
+	settings.target = false
+	return term.restore()
+end
+
+function target()
+	return settings.target
+end
+
+function redirected()
+	if target() == false then
+		return false
+	else
+		return true
+	end
+end
+
+
+-- Misc
+
+function pause()
+	while true do
+		local evt, code = os.pullEvent()
+		if evt == "key" and code == 28 then -- 28 = <return>
+			return
+		end
+	end
+end
+
+
