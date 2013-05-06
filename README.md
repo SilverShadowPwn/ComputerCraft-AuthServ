@@ -1,4 +1,4 @@
 ComputerCraft-AuthServ
 ======================
 
-Rednet based authentication server for ComputerCraft, supporting multiple access levels and limited uses for temporary codes.
+AuthServ is a simple, rednet-based authentication server for ComputerCraft. It support multiple access levels and temporary codes.
