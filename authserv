@@ -1,0 +1,478 @@
+--[[
+
++--------------------------------------------------------+
+|              Rednet Authentication Server              |
+|         Written by Myst Nightwing (Mystwing24)         |
++--------------------------------------------------------+
+| Allows for temporary access codes that automatically   |
+| expire world-wide when used a certain number of times. |
+| Works well with (and includes special support for)     |
+| the mag card reader from Immibis's Peripherals,        |
+| which you can find at http://tiny.cc/immibis, as well  |
+| as a little bit of special support for the RFID writer |
+| Immibis's Peripherals is not required to use this      |
+| program, but you should still look at it. It's a great |
+| addition to ComputerCraft, and will enhance the power  |
+| of this program a fair bit with magstripe/RFID cards.  |
++--------------------------------------------------------+
+|              ! ! ! IMPORTANT NOTICE ! ! !              |
+|             THIS PROGRAM IS STILL IN BETA!             |
+|                      EXPECT BUGS!                      |
+| Especially in the paging code for displaying the known |
+| codes and the user input code for changing existing    |
+| codes and adding new ones, as I had to scratch-code    |
+| all of that. I did the best I could, but I'm sure      |
+| someone else out there can make it better. If you can  |
+| help improve this code, I would be very grateful.      |
++--------------------------------------------------------+
+
+]]--
+
+-- We'll handle termination events manually.
+local oldPullEvent = os.pullEvent
+os.pullEvent = os.pullEventRaw
+
+-- Load some APIs for use later on
+os.loadAPI("/rom/apis/sys")
+sys.load("/rom/apis/net")
+sys.load("/rom/apis/scr")
+
+-- Store the codes we know about
+local codes = {}
+
+-- Path to the database file
+local dbPath = "/authserv.db"
+
+-- All the peripherals that are connected to the computer
+local peripherals = {}
+
+-- Get ready for initialization
+scr.clear()
+
+-- Tell the user what we're doing
+msg("Checking for modem...")
+
+-- Look for a modem
+local foundModem = false
+for _, side in pairs(redstone.getSides()) do
+	status("* Checking " .. side .. "... ", true)
+	if peripheral.getType(side) == "modem" then
+		good("yes")
+		rednet.open(side)
+		foundModem = true
+		break
+	else
+		bad("no")
+	end
+end
+
+-- If there's no modem yet, wait until one is installed.
+if not foundModem then
+	bad("No modem found.")
+	status("Waiting for a modem to be installed...")
+	msg("(Press a key to exit)")
+	while true do
+		local event, data = os.pullEvent()
+		if event == "terminate" or event == "key" then -- On keypress OR terminations event (JIC)
+			status(progname() .. " startup cancelled")
+			return
+		elseif event == "peripheral" then
+			msg("Peripheral installed on " .. data)
+			status("Checking type... ")
+			local pType = peripheral.getType(data)
+			sys.sleep(1)
+			if pType == "modem" then
+				good("modem")
+				rednet.open(data)
+				break
+			else
+				bad(pType)
+				scr.lf()
+			end
+		end
+	end
+end
+
+-- End of initialization, get ready for the next stage
+sys.sleep(2)
+scr.clear()
+
+-- Make sure the database file exists and is not a directory
+-- Doesn't matter if it's empty, so long as it's there.
+if not fs.exists(dbPath) then -- Nothing's there, so we have to make it
+	(fs.open(dbPath, "w")).close()
+elseif fs.isDir(dbPath) then -- It's a directory, so we rename it and then make our file
+	local newName = sys.day() .. " " .. sys.time() .. " " .. dbPath .. ".old"
+	fs.move(dbPath, newName)
+	(fs.open(dbPath, "w")).close()
+end
+
+status("Checking peripherals... ", true)
+peripheralCheck()
+good("done")
+status("Loading database... ", true)
+loadDatabase()
+good("done")
+status("Broadcasting online alert... ", true)
+net.broadcast("AUTH_ONLINE " .. sys.id())
+good("done")
+
+sys.sleep(1)
+
+-- The main event loop
+while true do
+	-- Clear the screen
+	scr.clear()
+	-- Display the program name, version, and author
+	info(progtag())
+	-- Show the server ID
+	info("Computer #" .. sys.id())
+	-- Two blank lines...
+	scr.lf(2)
+	-- The control menu
+	scr.color("gray")
+	scr.write("0) Shutdown")
+	scr.color("lightGray")
+	scr.write("1) View codes")
+	scr.color("white")
+	-- Remember, we changed os.pullEvent to os.pullEventRaw at the top
+	local event, p1, p2, p3 = os.pullEvent()
+	if event == "terminate" or (event == "char" and p1 == 0) then -- If the user wants us to shut down
+		exit()
+		break
+	elseif event == "peripheral" or event == "peripheral_detach" then -- If a peripheral is added or removed
+		peripheralCheck(true) -- Wait until a modem is installed, if neccessary
+		end
+	elseif event == "rednet_message" then -- Handle all rednet messages
+		rdntMsg(p1, p2)
+	elseif event == "char" then -- A regular key press, no special keys
+		local key = p1
+		if key == 1 then -- The view option from the menu was pressed
+			dispCodes() -- Where most of the magic (read: buggy stuff) is
+		end
+	end
+end
+
+-- Just reset the pullEvent() function to the way it was
+os.pullEvent = oldPullEvent
+
+
+-- Script proper ends. Function definitions follow.
+
+-- Called just before the server stops
+function exit()
+	-- Tell the user when we're shutting down...
+	severe(progname() .. " shutting down (" .. textutils.formatTime(os.time(), true) .. " on day " .. os.day())
+	-- Add a blank line...
+	scr.lf()
+	-- Final actions: tell the world that this server is stopping...
+	status("Broadcasting offline alert...", true)
+	net.broadcast("AUTH_OFFLINE " .. sys.id())
+	good("done")
+	-- ...save the database...
+	status("Saving database... ", true)
+	saveDatabase()
+	good("done")
+	-- ...and we're done
+end
+
+-- Abandon All Hope, Ye Who Enter Here
+function dispCodes()
+	-- Screen height
+	local h = scr.height()
+	-- Array index of the top line
+	local top = 1
+	-- Line number of the selected line
+	local sel = 1
+	-- Event loops! Yay!
+	while true do
+		-- Get the array index for the bottom line
+		local bot = top + h - 2
+		-- Require that the selected line actually be on the screen...
+		if sel < top then sel = top end
+		if sel > bot then sel = bot end
+		-- Show the chunk of codes, and get the current one.
+		local cur = page(top, sel, bot)
+		-- Same as the main event loop
+		local evt, p1, p2 = os.pullEvent()
+		if event == "terminate" then -- Alright, MOSTLY the same.
+			break
+		elseif event == "peripheral" or event == "peripheral_detach" then
+			peripheralCheck(true)
+		elseif event == "rednet_message" then
+			rdntMsg(p1, p2)
+		elseif evt == "key" then -- Here's where we handle the user-interaction stuff. Cringe in fear of my buggy code!
+			local code = p1
+			if code == 208 then -- down arrow was pressed
+				if sel == h then
+					top = top + 1
+				else
+					sel = sel + 1
+				end
+			elseif code == 200 then -- up arrow was pressed
+				if sel == 1 then
+					top = top - 1
+				else
+					sel = sel - 1
+				end
+			elseif code == 7 then -- Key "6" - go back
+				break
+			elseif code == 4 then -- Key "3" - edit the selected code
+				editCode(cur, codes[cur].uses, codes[cur].level)
+			elseif code == 5 then -- Key "4" - add a new code
+				newCode()
+			elseif code == 6 then -- Key "5" - delete the selected code
+				codes[cur] = nil
+			elseif code == 2 then -- Key "1" - write the selected code to a magcard (Immibis's Peripherals)
+				if peripherals["mag card reader"] then
+					local mcr = peripherals["mag card reader"][2]
+					mcr.beginWrite(cur, "Magstripe Card") -- The magcard reader will wait for a card to be swiped, but won't block.
+				end
+			elseif code == 3 then -- Key "2" - write the selected code to an RFID Card (Immibis's Peripherals)
+				if peripherals["rfid writer"] then
+					local rcw = peripherals["rfid writer"][2]
+					while (not rcw.isPresent()) or rcw.isCoded() do end -- Wait for an unencoded card. Can't overwrite RFID cards.
+					rcw.encode(cur, "RFID Card")
+				end
+			end
+		end
+	end
+end
+
+-- Edit a given code, removing the original. You can change the actual code, not just the level and remaining uses.
+-- That's why we can't JUST do "codes[new[1]] = { "level" = new[2], "uses" = new[3] }"
+-- The original code might be different from the new one.
+function editCode(original, uses, lvl)
+	local new = {getCodeFromUser(uses, lvl, original)}
+	codes[original] = nil -- Get rid of the original, in case the new code is different
+	codes[new[1]] = { "level" = new[2], "uses" = new[3] } -- Add the new code to the database
+end
+
+-- Create a brand new code, but don't overwrite an existing one.
+function newCode()
+	local new = {getCodeFromUser()}
+	if not codes[new[1]] then
+		codes[new[1]] = { "level" = new[2], "uses" = new[3] }
+	end
+end
+
+-- Return values: code, level, uses
+-- Get a code, the access level for it, and the number of times it can be used.
+function getCodeFromUser(uses, level, init) -- This is a huge mess...
+	local input = "" -- Current code
+	if init then input = init end -- You can pass an initial value for the code, if you want
+	local cindex = input:len() -- Terribly named, I'm sorry. It's the number of spaces before the "^" indicating the current character
+	if not uses then uses = 1 end -- Defaults for the
+	if not level then level = 1 end -- uses and access level
+	local active = 1 -- The active section. 1=code, 2=level, 3=uses
+	-- Another event loop!
+	while true do
+		if uses < 1 then uses = 1 end -- If you want to remove a code, use the DELETE function!
+		if level < 0 then level = 0 end -- No negative access levels.
+		scr.clear() -- Oh boy, here we go again!
+		scr.setY(1) -- A new style of positioning. Ugh...
+		scr.write("Code:")
+		if active == 1 then scr.color("green") -- The active section is in green.
+		scr.write(input)
+		scr.write(" ":rep(cindex) .. "^") -- See what I meant about the cindex variable? Terrible name!
+		scr.color("white")
+		scr.setY(5)
+		scr.write("Level: ", true) -- Section 2...
+		if active == 2 then scr.color("green")
+		scr.write(level)
+		scr.color("white")
+		scr.setY(6)
+		scr.write("Uses: ", true) -- And section 3!
+		if active == 3 then scr.color("green")
+		scr.write(uses)
+		scr.color("white")
+		-- ALSO mostly the same as the main event loop
+		local evt, p1, p2, p3 = os.pullEvent()
+		if event == "terminate" then
+			break
+		elseif event == "peripheral" or event == "peripheral_detach" then
+			peripheralCheck(true)
+		elseif event == "rednet_message" then
+			rdntMsg(p1, p2)
+		elseif event == "mag_swipe" and active == 1 then -- If you swipe a magstripe card (Immibis) while on the code section...
+			input = input .. p1 -- ...it's appended to the existing code
+		elseif event == "key" then -- Key presses, including special keys
+			if p1 == 201 then -- pg up was pressed
+				active = active - 1
+				if active < 1 then active = 3 end
+			elseif p1 == 209 then -- pg down was pressed
+				active = active + 1
+				if active > 3 then active = 1 end
+			elseif active == 1 then -- Only if you are on the code section...
+				if p1 == 203 and cindex > 0 then -- If the left arrow was pressed AND you're not on the first character yet...
+					cindex - 1
+				elseif p1 == 205 and cindex < input:len() then -- Right arrow pressed and you're NOT trying to go past the end of the line...
+					cindex + 1
+				elseif p1 == 28 then -- Enter key was pressed
+					return input, level, uses
+				elseif p1 == 14 and cindex > 0 then -- backspace was pressed, while NOT on the first character
+					input = ("%s%s"):format(input:sub(1,cindex-2), input:sub(cindex)) -- Remove the character to the LEFT of the cursor
+					cindex = cindex - 1
+				elseif p1 == 211 then -- delete was pressed
+					input = ("%s%s"):format(input:sub(1,cindex-1), input:sub(cindex+1))
+					cindex = cindex - 1
+				end
+			elseif active == 2 then -- Section two, the access level, is active
+				if p1 == 200 then -- up arrow pressed
+					level = level + 1 -- Increment the level
+				elseif p1 == 208 then -- down arrow pressed
+					level = level - 1 -- Decrement the level
+				end
+			elseif active == 3 then -- Section three, the number of uses, is active
+				if p1 == 200 then -- up arrow pressed
+					uses = uses + 1 -- Increment the number of uses
+				elseif p1 == 208 then -- down arrow pressed
+					uses = uses - 1 -- Decrement the number of uses
+				end
+			end
+		elseif event == "char" and active == 1 then -- A regular key was pressed while the code section is active
+			if cindex == input:len() then -- Adding a new character
+				input = input .. p1
+			else -- Inserting a character in the middle somewhere
+				input = ("%s%s%s"):format(input:sub(1,cindex), p1, input:sub(cindex+1))
+			end
+			cindex = cindex + 1 -- Length just went up by one
+		end
+	end
+end
+
+function page(tl, sl, bl) -- Top Line, Selected Line, and Bottom Line
+	-- One more time!
+	scr.clear()
+	-- We need a REALLY SMALL control menu
+	scr.write("1) Write to magcard 2) Write to RFID 3) Edit 4) New 5) Delete 6) Back")
+	-- The content of the selected line
+	local code = ""
+	-- The item of the array that we're on
+	local on = 0
+	-- Loops galore...
+	for k, v in pairs(codes) do
+		on = on + 1
+		if on < tl then -- Not yet at the item for the top line
+			on = on -- Do nothing
+		elseif on > bl then -- Past the bottom line
+			break
+		else -- Within range!
+			if on == sl then -- If this is the selected line,
+				scr.color("white") -- make it white
+				code = k -- and save the contents
+			else -- Otherwise,
+				scr.color("gray") -- make it gray
+			end
+			scr.write(k) -- Write it to the screen
+		end
+	end -- for
+	return code -- return the contents of the selected line
+end
+
+function rdntMsg(sid, text) -- Handle rednet messages
+	if str.sub(text, 1, 9) == "GET_AUTH " then -- If it's a client requesting the access level of some code, we handle it!
+		local code = str.sub(text, 10) -- Get the actual code
+		if codes[code] then -- Do we even know this one?
+			net.send(sid, "AUTH_LEVEL " .. codes[code][level]) -- Tell the client what the given code's access level is...
+			codes[code][uses] = codes[code][uses] - 1 -- ...and decrement the number of uses left.
+			if not codes[code][uses] then -- If there are no more uses allowed for this code...
+				codes[code] = nil -- ...we remove it from the database
+			end
+		else -- We don't know this code.
+			net.send(sid, "NO_AUTH")
+		end
+	end
+end
+
+function peripheralCheck(req) -- Handle peripheral checking
+	peripherals = {} -- Reset the list of current peripherals
+	for _, side in pairs(redstone.getSides()) do installPeripheral(side) end -- This ONE line loads the list of current peripherals
+	if req and not peripherals.modem then -- Most of this function is taken up by the optional check for a modem.
+		severe("No modem found. Please install a modem.")
+		while true do
+			local evt, data = os.pullEvent()
+			if evt == "peripheral" then -- A peripheral was added
+				peripheralCheck()
+				break
+			end
+		end
+	end
+end
+
+function installPeripheral(side) -- Load a peripheral from a given side
+	if not peripheral.isPresent(side) then -- There has to be something THERE, mind you...
+		return false, false
+	end
+	local wrapped = peripheral.wrap(side) -- Wrap the peripheral
+	local typ = peripheral.getType(side) -- and get its type.
+	peripherals[typ] = {side, wrapped} -- Store it in the program-wide peripherals table
+	return wrapped, typ -- And return the wrapped object and the type
+end
+
+function loadDatabase() -- Load the access code database from the filesystem
+	local h = fs.open(dbPath, "r") -- dbPath is defined (much) higher up, and defaults to "/authserv.db"
+	local db = h.readAll() -- Get the contents of the ENTIRE file
+	h.close() -- Close the handle
+	fs.delete(dbPath) -- Delete the DB file, now that we don't need it.
+	codes = textutils.unserialize(db) -- Load the database
+end
+function saveDatabase() -- Save the access code database to the filesystem
+	local h = fs.open(dbPath, "w") -- See the function loadDatabase() above
+	h.write(textutils.serialize(codes)) -- Write the database to the file
+	h.close() -- And close the file handle
+end
+
+function progname() -- Name of the program
+	return "AuthServ"
+end
+function progver() -- Program version
+	return "1.0.0"
+end
+function progtag() -- "Tagline", just <NAME> V<VERSION> at the moment
+	return progname() .. " V" .. progver()
+end
+
+-- Simple output function wrappers
+function status(text, noLF)
+	scr.color("brown")
+	scr.write(text, noLF)
+	scr.color("white")
+end
+function msg(text, noLF)
+	scr.color("cyan")
+	scr.write(text, noLF)
+	scr.color("white")
+end
+function info(text, noLF)
+	scr.color("magenta")
+	scr.write(text, noLF)
+	scr.color("white")
+end
+function notice(text, noLF)
+	scr.color("yellow")
+	scr.write(text, noLF)
+	scr.color("white")
+end
+function warning(text, noLF)
+	scr.color("orange")
+	scr.write(text, noLF)
+	scr.color("white")
+end
+function severe(text, noLF)
+	scr.clear() -- Notice that this one clears the screen!
+	scr.color("red")
+	scr.write(text, noLF)
+	scr.color("white")
+end
+function good(text, noLF)
+	scr.color("lime")
+	scr.write(text, noLF)
+	scr.color("white")
+end
+function bad(text, noLF)
+	scr.color("red")
+	scr.write(text, noLF)
+	scr.color("white")
+end
+
