@@ -2,7 +2,6 @@
 
 +--------------------------------------------------------+
 |              Rednet Authentication Server              |
-|         Written by Myst Nightwing (Mystwing24)         |
 +--------------------------------------------------------+
 | Allows for temporary access codes that automatically   |
 | expire world-wide when used a certain number of times. |
@@ -24,6 +23,10 @@
 | all of that. I did the best I could, but I'm sure      |
 | someone else out there can make it better. If you can  |
 | help improve this code, I would be very grateful.      |
++--------------------------------------------------------+
+|                         CREDITS                        |
+|                                                        |
+| Original author: SilverShadowPwn                       |
 +--------------------------------------------------------+
 
 ]]--
